@@ -45,7 +45,7 @@ Dormant found 519 files worth 71.0 GB it is 99% sure you will not reopen
 inside 90 days. On the held-out slice it was right 99% of the time it said stop.
 ```
 
-Every number in that sentence is computed. The model is never asked to restate data, because a language model that rounds 71.3 GB to "about 70" is a bug, not a feature.
+Every number in that sentence is computed. The model is never asked to restate data, because a language model that rounds 71.0 GB to "about 70" is a bug, not a feature.
 
 There is a synthetic corpus for screenshots and demos, because the index contains file paths, sizes and the dates I opened things, and that is not something I want in a public repository:
 
@@ -73,7 +73,7 @@ That third clause is the difference between an evaluation and a fiction. A windo
 
 The split is on the observation date, never random. Two rows from the same file share a history, so a random split puts yesterday inside tomorrow. Validation is rolling-origin: train on all history up to a cut, score the slice immediately after it.
 
-Two passes for ingestion, deliberately. `os.walk` plus `os.stat` gives the whole universe in 7 seconds. `mdls` is a subprocess round trip to the Spotlight daemon, so it only runs on personal files, in a thread pool, 21 seconds. My first version paid 180 seconds to ask 8,000 repository files whether they had been opened, which was both slow and wrong, because nobody double-clicks a vendored PHP file and a model trained on those rows learns that everything in a repository is dead weight. Files under `.git`, `node_modules`, `vendor`, `Pods` or any build-system marker are indexed but never scored.
+Two passes for ingestion, deliberately. `os.walk` plus `os.stat` gives the whole universe in under two seconds. `mdls` is a subprocess round trip to the Spotlight daemon, so it only runs on personal files, in a thread pool, ten seconds. My first version paid 180 seconds to ask 8,000 repository files whether they had been opened, which was both slow and wrong, because nobody double-clicks a vendored PHP file and a model trained on those rows learns that everything in a repository is dead weight. Files under `.git`, `node_modules`, `vendor`, `Pods` or any build-system marker are indexed but never scored.
 
 The disk-fill forecast is arithmetic, not a model. Free space comes from `disk_usage()`, the growth rate from a Theil-Sen fit over nightly snapshots, and the projection is a line. TabPFN is offered a second, learned projection of the same series, because Prior Labs describes the product as forecasting, but the headline date is always the one you could check with a calculator.
 
@@ -119,7 +119,7 @@ HistGradientBoosting beats the open-weight model at every corpus size on my mach
 
 **Cost to run is zero, permanently.** 2,500 predictions in about 10 seconds on CPU. No meter. I can run it nightly for three years and it will never be a bill.
 
-**Swapping the model is a config change, not a rewrite.** `dormant/model.py` treats the predictor as a provider and the baselines sit in the same scoreboard on purpose, so the open-weight claim is falsifiable rather than decorative. HistGradientBoosting does currently edge TabPFN on AUC on this corpus, 0.967 against 0.955, and I would rather say that here than have someone find it in the code.
+**Swapping the model is a config change, not a rewrite.** `dormant/model.py` treats the predictor as a provider and the baselines sit in the same scoreboard on purpose, so the open-weight claim is falsifiable rather than decorative. HistGradientBoosting does currently edge TabPFN on AUC on this corpus, 0.962 against 0.956, and I would rather say that here than have someone find it in the code.
 
 **Where open worked better than closed:** the moment I wanted to change what "dormant" means, from 30 days to 90, the whole thing stayed mine. That is a horizon constant and a re-run. With a hosted model I would be re-deciding what I was willing to upload each time I changed my mind.
 
