@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-accent="amber" data-density="roomy">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="description" content="Dormant: an open-weight model that reads what macOS already recorded about your files and tells you which of them you are never going to open again.">
+<title>Dormant · Storage Observatory</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23f0b429' stroke-width='2'/%3E%3Cpath d='M16 6a10 10 0 0 0 0 20' fill='none' stroke='%23f0b429' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23f0b429'/%3E%3C/svg%3E">
+</head>
+<body>
+<div class="frame">
+  <div class="gridlines" aria-hidden="true"></div>
+  <div class="sweep" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="13" class="mark-ring"/>
+        <path d="M16 5a11 11 0 0 1 0 22" class="mark-arc"/>
+        <circle cx="16" cy="16" r="3.4" class="mark-core"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-name">DORMANT</span>
+        <span class="brand-sub">storage observatory · local inference</span>
+      </div>
+    </div>
+
+    <div class="status-cluster">
+      <span class="led" id="led" title="engine idle"></span>
+      <span class="status-text" id="statusText">connecting</span>
+      <span class="chip mode" id="modeChip">REAL</span>
+    </div>
+
+    <div class="controls">
+      <div class="clock" id="clock">--:--:--</div>
+      <div class="toggler" role="group" aria-label="theme">
+        <button class="tog-btn" data-theme-set="dark" aria-pressed="true">Dark</button>
+        <button class="tog-btn" data-theme-set="light" aria-pressed="false">Light</button>
+      </div>
+      <div class="accents" role="group" aria-label="accent colour">
+        <button class="sw" data-accent-set="amber" style="--sw:#f0b429" aria-label="amber"></button>
+        <button class="sw" data-accent-set="cyan" style="--sw:#3ee0f2" aria-label="cyan"></button>
+        <button class="sw" data-accent-set="violet" style="--sw:#b184ff" aria-label="violet"></button>
+        <button class="sw" data-accent-set="moss" style="--sw:#5fe3a1" aria-label="moss"></button>
+      </div>
+      <button class="tog-btn density" id="densityBtn" aria-pressed="false">Compact</button>
+    </div>
+  </header>
+
+  <section class="brief" id="briefPanel">
+    <div class="brief-kicker">MORNING BRIEF <span class="tick"></span></div>
+    <p class="brief-line" id="brief1">Reading the index…</p>
+    <p class="brief-line secondary" id="brief2"></p>
+    <div class="brief-meta" id="briefMeta"></div>
+  </section>
+
+  <main class="deck">
+    <section class="panel panel-field" data-panel="field">
+      <div class="panel-head">
+        <h2>Dormancy Field</h2>
+        <div class="panel-legend">
+          <span class="lg"><i class="dot alive"></i>will reopen</span>
+          <span class="lg"><i class="dot dormant"></i>dormant</span>
+        </div>
+      </div>
+      <div class="field-wrap">
+        <canvas id="field" aria-label="Three dimensional plot of indexed files: radius is age, height is the model's dormancy score"></canvas>
+        <div class="field-hint" id="fieldHint">drag to orbit · each point is one file</div>
+        <div class="tip" id="tip" hidden></div>
+      </div>
+      <div class="field-foot">
+        <span id="fieldCount">0 points</span>
+        <span class="axis-note">radius = age in days · height = 1 − p(reopen)</span>
+      </div>
+    </section>
+
+    <section class="panel panel-forecast" data-panel="forecast">
+      <div class="panel-head"><h2>Volume Forecast</h2><span class="tag" id="forecastSource"></span></div>
+      <div class="gauge-wrap">
+        <svg viewBox="0 0 200 120" class="gauge" role="img" aria-label="free space remaining">
+          <path class="gauge-track" d="M18 110 A 82 82 0 0 1 182 110"/>
+          <path class="gauge-fill" id="gaugeFill" d="M18 110 A 82 82 0 0 1 182 110"/>
+          <text x="100" y="88" class="gauge-num" id="gaugePct">--</text>
+          <text x="100" y="106" class="gauge-lbl" id="gaugeLbl">free</text>
+        </svg>
+        <dl class="kv" id="forecastKv"></dl>
+      </div>
+      <canvas id="curve" class="curve" aria-label="growth curve of bytes added over time"></canvas>
+      <div class="projections" id="projections"></div>
+    </section>
+
+    <section class="panel panel-ledger" data-panel="ledger">
+      <div class="panel-head"><h2>Reclaim Ledger</h2></div>
+      <div class="ledger">
+        <div class="figure"><span class="fig-num" id="figGb">0.0</span><span class="fig-unit">GB</span><span class="fig-lbl">identified as dormant</span></div>
+        <div class="figure"><span class="fig-num" id="figFiles">0</span><span class="fig-unit">files</span><span class="fig-lbl">on the stop list</span></div>
+        <div class="figure"><span class="fig-num" id="figDays">0</span><span class="fig-unit">days</span><span class="fig-lbl">bought at current growth</span></div>
+      </div>
+      <div class="ledger-actions">
+        <button class="btn primary" id="stageBtn">Stage top candidates</button>
+        <button class="btn ghost" id="undoBtn">Undo last manifest</button>
+      </div>
+      <p class="assurance" id="assurance">Dormant moves files into a dated staging folder and keeps a manifest. It has no delete code path.</p>
+    </section>
+
+    <section class="panel panel-bench" data-panel="bench">
+      <div class="panel-head"><h2>Model Bench</h2><span class="tag" id="benchSplit"></span></div>
+      <div class="bench-rows" id="benchRows"></div>
+      <div class="scarcity">
+        <div class="scarcity-head">AUC as the labelled corpus shrinks</div>
+        <canvas id="scarcity" class="scarcity-canvas" aria-label="accuracy versus training set size for each model"></canvas>
+        <div class="scarcity-legend" id="scarcityLegend"></div>
+      </div>
+    </section>
+
+    <section class="panel panel-register" data-panel="register">
+      <div class="panel-head">
+        <h2>Dormant Register</h2>
+        <div class="row-tools">
+          <input type="search" id="filter" placeholder="filter files" aria-label="filter files">
+          <button class="mini" id="sortConf" aria-pressed="true">confidence</button>
+          <button class="mini" id="sortSize" aria-pressed="false">size</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="register">
+          <thead><tr><th>file</th><th>size</th><th>last opened</th><th>days shut</th><th class="num">confidence</th></tr></thead>
+          <tbody id="registerBody"></tbody>
+        </table>
+      </div>
+      <div class="table-foot"><span id="registerCount"></span><button class="btn tiny" id="moreBtn">load more</button></div>
+    </section>
+
+    <section class="panel panel-agent" data-panel="agent">
+      <div class="panel-head"><h2>Agent Console</h2><span class="tag" id="plannerTag">keyword planner</span></div>
+      <form class="agent-form" id="agentForm">
+        <input id="agentInput" placeholder="free up 12 gigabytes and tell me when the disk fills" aria-label="instruction">
+        <button class="btn primary" type="submit">Run</button>
+      </form>
+      <div class="agent-suggestions" id="agentSuggest"></div>
+      <pre class="agent-out" id="agentOut" hidden></pre>
+    </section>
+
+    <section class="panel panel-log" data-panel="log">
+      <div class="panel-head"><h2>Activity</h2><div class="log-tools">
+        <button class="mini" id="rescanBtn">Rescan</button>
+        <button class="mini" id="rescoreBtn">Re-score</button>
+      </div></div>
+      <ul class="log" id="log"></ul>
+    </section>
+  </main>
+
+  <nav class="mobile-tabs" aria-label="panel navigation">
+    <button data-goto="field" class="on">Field</button>
+    <button data-goto="forecast">Disk</button>
+    <button data-goto="register">List</button>
+    <button data-goto="bench">Bench</button>
+    <button data-goto="agent">Agent</button>
+  </nav>
+
+  <footer class="foot">
+    <span id="footModel">TabPFN open weights · local inference · no network egress</span>
+    <span class="sep">·</span>
+    <span id="footScan">index idle</span>
+    <span class="sep">·</span>
+    <a href="https://github.com/soumwadeep/Dormant" rel="noopener">source</a>
+  </footer>
+</div>
+<div class="toast" id="toast" hidden></div>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>
