@@ -114,7 +114,7 @@ def top_flagged(conn, limit: int = 200) -> list[dict]:
         """SELECT f.id, f.path, f.name, f.ext, f.size_bytes, f.volume, f.created_at, f.modified_at,
                   f.last_used_at, f.open_count, f.context, p.p_reopen, p.rank
            FROM predictions p JOIN files f ON f.id = p.file_id
-           WHERE f.archived_at IS NULL
+           WHERE f.disposition = 'present'
            ORDER BY p.p_reopen ASC LIMIT ?""", (limit,)).fetchall()
     out = []
     for r in rows:
@@ -141,7 +141,7 @@ def field_points(conn, limit: int = 3000) -> list[dict]:
     rows = conn.execute(
         """SELECT f.size_bytes, f.ext, f.created_at, f.last_used_at, p.p_reopen, f.context
            FROM predictions p JOIN files f ON f.id = p.file_id
-           WHERE f.archived_at IS NULL ORDER BY p.rank LIMIT ?""", (limit,)).fetchall()
+           WHERE f.disposition = 'present' ORDER BY p.rank LIMIT ?""", (limit,)).fetchall()
     now = datetime.now(timezone.utc)
     pts = []
     for r in rows:
@@ -159,7 +159,7 @@ def field_points(conn, limit: int = 3000) -> list[dict]:
 def largest_cluster(conn, threshold: float) -> str | None:
     rows = conn.execute(
         """SELECT f.path, f.size_bytes, p.p_reopen FROM predictions p
-           JOIN files f ON f.id = p.file_id WHERE f.archived_at IS NULL""").fetchall()
+           JOIN files f ON f.id = p.file_id WHERE f.disposition = 'present'""").fetchall()
     counts: dict[str, int] = {}
     for r in rows:
         if (1 - r["p_reopen"]) < threshold:
@@ -180,20 +180,20 @@ def state(conn) -> dict:
     counts = conn.execute(
         """SELECT COUNT(*) total, SUM(has_history) hist, SUM(size_bytes) bytes,
                   SUM(CASE WHEN context='project' THEN 1 ELSE 0 END) project
-           FROM files WHERE archived_at IS NULL""").fetchone()
+           FROM files WHERE disposition = 'present'""").fetchone()
     last_scan = conn.execute("SELECT * FROM scan_runs ORDER BY id DESC LIMIT 1").fetchone()
     bench_rows = conn.execute("SELECT * FROM bench ORDER BY id DESC LIMIT 12").fetchall()
     threshold, precision = best_threshold(conn)
     flagged_row = conn.execute(
         """SELECT COUNT(*) c, COALESCE(SUM(f.size_bytes),0) b FROM predictions p
            JOIN files f ON f.id = p.file_id
-           WHERE f.archived_at IS NULL AND (1 - p.p_reopen) >= ?""", (threshold,)).fetchone()
+           WHERE f.disposition = 'present' AND (1 - p.p_reopen) >= ?""", (threshold,)).fetchone()
     days_bought = None
-    if fc.get("growth_gb_per_day") and fc["growth_gb_per_day"] > 0:
+    if fc.get("full_date") and (fc.get("growth_gb_per_day") or 0) >= 0.05:
         days_bought = (flagged_row["b"] / 1e9) / fc["growth_gb_per_day"]
     conf_row = conn.execute(
         """SELECT AVG(1 - p.p_reopen) m FROM predictions p JOIN files f ON f.id = p.file_id
-           WHERE f.archived_at IS NULL AND (1 - p.p_reopen) >= ?""", (threshold,)).fetchone()
+           WHERE f.disposition = 'present' AND (1 - p.p_reopen) >= ?""", (threshold,)).fetchone()
     mean_conf = float(conf_row["m"] or 0.0)
     brief = build_brief(
         count=flagged_row["c"], bytes_total=flagged_row["b"], mean_confidence=mean_conf,

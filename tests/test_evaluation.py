@@ -170,3 +170,65 @@ def test_api_health_reports_index_size(fresh_db):
     api_app._conn = fresh_db
     client = TestClient(api_app.app)
     assert client.get("/api/state").json()["counts"]["files"] >= 1
+
+
+# ------------------------------------------------------------------- preview guardrails
+
+def test_preview_requires_the_token(fresh_db, tmp_path):
+    """File contents are the most sensitive thing this server can hand out."""
+    from fastapi.testclient import TestClient
+
+    import api.app as api_app
+
+    p = tmp_path / "secret.pdf"
+    p.write_bytes(b"%PDF-1.4 " + b"z" * 500)
+    fid = add_file(fresh_db, str(p), created=iso(300), size=p.stat().st_size)
+    api_app._conn = fresh_db
+    client = TestClient(api_app.app)
+
+    assert client.get(f"/api/file/{fid}/content").status_code == 403
+    assert client.get(f"/api/file/{fid}/meta").status_code == 403
+    ok = client.get(f"/api/file/{fid}/content?token={api_app.PREVIEW_TOKEN}")
+    assert ok.status_code == 200 and ok.content.startswith(b"%PDF")
+
+
+def test_preview_supports_range_requests(fresh_db, tmp_path):
+    from fastapi.testclient import TestClient
+
+    import api.app as api_app
+
+    p = tmp_path / "clip.mp4"
+    p.write_bytes(bytes(range(256)) * 40)
+    fid = add_file(fresh_db, str(p), created=iso(300), size=p.stat().st_size)
+    api_app._conn = fresh_db
+    client = TestClient(api_app.app)
+    r = client.get(f"/api/file/{fid}/content?token={api_app.PREVIEW_TOKEN}",
+                   headers={"range": "bytes=10-19"})
+    assert r.status_code == 206
+    assert r.headers["content-range"].startswith("bytes 10-19/")
+    assert len(r.content) == 10
+
+
+def test_index_html_carries_the_token_for_its_own_page(fresh_db):
+    from fastapi.testclient import TestClient
+
+    import api.app as api_app
+
+    api_app._conn = fresh_db
+    client = TestClient(api_app.app)
+    html = client.get("/").text
+    assert api_app.PREVIEW_TOKEN in html
+    assert "__PREVIEW_TOKEN__" not in html
+
+
+def test_api_delete_needs_the_phrase(fresh_db):
+    from fastapi.testclient import TestClient
+
+    import api.app as api_app
+
+    add_file(fresh_db, "/Users/demo/Documents/keepme.pdf", created=iso(300))
+    api_app._conn = fresh_db
+    client = TestClient(api_app.app)
+    res = client.post("/api/delete", json={"ids": [1], "phrase": "yes"}).json()
+    assert res["confirm_required"] and res["phrase_expected"] == "DELETE"
+    assert client.get("/api/state").json()["counts"]["files"] >= 1, "nothing was deleted"

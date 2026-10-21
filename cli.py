@@ -173,6 +173,79 @@ def cmd_undo(args):
         print(f"{len(res['failed'])} could not be restored: {res['failed'][0]['why']}")
 
 
+def cmd_preview(args):
+    from dormant import action
+    from dormant.store import connect, init_db
+
+    conn = connect()
+    init_db(conn)
+    if args.ids:
+        paths = []
+        for i in args.ids:
+            row = conn.execute("SELECT path FROM files WHERE id = ?", (i,)).fetchone()
+            if row is None:
+                print(f"id {i} is not in the index")
+                continue
+            info = action.preview_info(conn, i)
+            print(f"{i:>6}  {info['kind']:<6} {_gb(info['size_bytes']):>10}  {info['path']}")
+            paths.append(row["path"])
+    else:
+        paths = args.paths or []
+    if not paths:
+        print("nothing to preview. pass file ids or paths.")
+        return
+    if args.reveal:
+        print(action.reveal(paths))
+        return
+    print(action.quicklook(paths))
+
+
+def cmd_trash(args):
+    from dormant import action, engine
+    from dormant.store import connect, init_db
+
+    conn = connect()
+    init_db(conn)
+    ids = args.ids or [r["id"] for r in engine.top_flagged(conn, limit=args.top)]
+    rows = conn.execute("SELECT path, size_bytes FROM files WHERE id IN (%s)" % ",".join("?" * len(ids)), ids).fetchall()
+    print(f"about to send {len(ids)} files ({_gb(sum(r['size_bytes'] for r in rows))}) to the macOS Trash")
+    for r in rows[:10]:
+        print(f"  {r['path'][-78:]}")
+    if not args.yes:
+        print("\nnothing moved. re-run with --yes. Put Back in Finder will still reverse this.")
+        return
+    res = action.trash(conn, ids, reason="cli")
+    print(f"trashed {res['count']} files, {_gb(res['bytes'])}, manifest {res['manifest']}")
+
+
+def cmd_purge(args):
+    from dormant import action, engine
+    from dormant.store import connect, init_db
+
+    conn = connect()
+    init_db(conn)
+    ids = args.ids or [r["id"] for r in engine.top_flagged(conn, limit=args.top)]
+    rows = conn.execute("SELECT path, size_bytes FROM files WHERE id IN (%s)" % ",".join("?" * len(ids)), ids).fetchall()
+    total = sum(r["size_bytes"] for r in rows)
+    print(f"PERMANENT DELETE: {len(ids)} files, {_gb(total)}. These will not go to the Trash.")
+    for r in rows[:10]:
+        print(f"  {r['path'][-78:]}")
+    if len(rows) > 10:
+        print(f"  ... and {len(rows) - 10} more")
+    if args.phrase != action.DELETE_PHRASE:
+        print(f"\nnothing deleted. re-run with --phrase {action.DELETE_PHRASE} --yes to confirm.")
+        return
+    if not args.yes:
+        print("\nnothing deleted. re-run with --yes as well.")
+        return
+    res = action.purge(conn, ids, confirm=args.phrase, reason="cli")
+    print(f"deleted {res['removed']} files, freed {_gb(res['bytes_freed'])}, manifest {res['manifest']}")
+    for s in res["skipped"][:5]:
+        print(f"  skipped: {s.get('why')} {s.get('path', '')[-60:]}")
+    if res["failed"]:
+        print(f"{len(res['failed'])} could not be removed")
+
+
 def cmd_agent(args):
     from dormant.agent import handle
 
@@ -198,6 +271,12 @@ def cmd_serve(args):
     port = args.port or API_PORT
     print(f"Dormant mission control on http://{host}:{port}  (data: {os.environ.get('DORMANT_DATA', ROOT / 'data')})")
     uvicorn.run("api.app:app", host=host, port=port, log_level="warning")
+
+
+def action_phrase() -> str:
+    from dormant.action import DELETE_PHRASE
+
+    return DELETE_PHRASE
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -247,6 +326,25 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--manifest")
     s.add_argument("--yes", action="store_true")
     s.set_defaults(func=cmd_undo)
+
+    s = sub.add_parser("preview", help="Quick Look indexed files, or show them in Finder")
+    s.add_argument("ids", nargs="*", type=int, help="file ids from `dormant top`")
+    s.add_argument("--paths", nargs="*", help="raw paths instead of ids")
+    s.add_argument("--reveal", action="store_true", help="reveal in Finder rather than preview")
+    s.set_defaults(func=cmd_preview)
+
+    s = sub.add_parser("trash", help="move files to the macOS Trash (recoverable)")
+    s.add_argument("--ids", nargs="*", type=int)
+    s.add_argument("--top", type=int, default=50)
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(func=cmd_trash)
+
+    s = sub.add_parser("purge", help="permanently delete files (irreversible)")
+    s.add_argument("--ids", nargs="*", type=int)
+    s.add_argument("--top", type=int, default=0)
+    s.add_argument("--phrase", default="", help=f"must be {action_phrase()} to proceed")
+    s.add_argument("--yes", action="store_true")
+    s.set_defaults(func=cmd_purge)
 
     s = sub.add_parser("agent", help="one sentence in, tool calls out")
     s.add_argument("instruction", nargs="+")

@@ -11,13 +11,16 @@ reasons.
 
 from __future__ import annotations
 
+import mimetypes
+import os
+import secrets
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -28,6 +31,14 @@ from dormant.store import connect, get_meta, init_db
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 app = FastAPI(title="Dormant", version=VERSION, docs_url=None, redoc_url=None)
+
+#: The preview endpoints hand out the *contents* of real files, so they are not open
+#: to anything that can reach 127.0.0.1. A page loaded from this server gets the token
+#: injected into its HTML; a random website on the same machine does not, and a
+#: cross-origin fetch cannot read the response to steal it. Same-origin pages only.
+PREVIEW_TOKEN = secrets.token_urlsafe(24)
+CHUNK = 1 << 20
+MAX_INLINE_TEXT = 24_000
 
 _conn = None
 _state_lock = threading.Lock()
@@ -49,9 +60,10 @@ def _job_log(msg: str) -> None:
 
 
 class ArchiveIn(BaseModel):
-    top: int = Field(50, ge=1, le=5000)
+    top: int = Field(50, ge=0, le=5000)
     max_gb: float = Field(10.0, gt=0, le=2000)
     confirm: bool = False
+    ids: list[int] = Field(default_factory=list, max_length=5000)
 
 
 class UndoIn(BaseModel):
@@ -61,6 +73,16 @@ class UndoIn(BaseModel):
 
 class AgentIn(BaseModel):
     text: str = Field(min_length=1, max_length=400)
+
+
+class IdsIn(BaseModel):
+    ids: list[int] = Field(default_factory=list, max_length=5000)
+
+
+class DeleteIn(BaseModel):
+    ids: list[int] = Field(default_factory=list, max_length=5000)
+    top: int = Field(0, ge=0, le=5000)
+    phrase: str = Field("", max_length=32)
 
 
 class ScanIn(BaseModel):
@@ -93,7 +115,27 @@ def index():
     target = WEB_DIR / "index.html"
     if not target.exists():
         return JSONResponse({"error": "web/index.html missing"}, status_code=500)
-    return FileResponse(target)
+    html = target.read_text(encoding="utf-8").replace("__PREVIEW_TOKEN__", PREVIEW_TOKEN)
+    return Response(content=html, media_type="text/html")
+
+
+def _check_token(token: str | None) -> None:
+    if not secrets.compare_digest(token or "", PREVIEW_TOKEN):
+        raise HTTPException(403, "preview requires the token served with this page")
+
+
+def _resolve(conn, file_id: int):
+    from dormant import action
+
+    try:
+        info = action.preview_info(conn, file_id)
+    except action.UnsafeAction as exc:
+        raise HTTPException(404, str(exc))
+    if not info["exists"]:
+        raise HTTPException(410, "the file is not on disk any more")
+    if any(info["path"].startswith(p) for p in action.PROTECTED_PREFIXES):
+        raise HTTPException(403, "protected path")
+    return info
 
 
 def _has_index(conn) -> bool:
@@ -195,14 +237,14 @@ def archive(payload: ArchiveIn):
     from dormant import action
 
     conn = db()
-    rows = engine.top_flagged(conn, limit=payload.top)
+    rows = engine.top_flagged(conn, limit=payload.top or 50)
+    ids = payload.ids or [r["id"] for r in rows]
     if not payload.confirm:
-        return {"confirm_required": True, "would_stage": len(rows),
+        return {"confirm_required": True, "would_stage": len(ids),
                 "bytes": sum(r["size_bytes"] for r in rows), "sample": rows[:12]}
     if get_meta(conn, "data_mode", "real") == "demo":
         raise HTTPException(409, "the demo corpus is synthetic: those files do not exist on disk")
-    return action.archive(conn, [r["id"] for r in rows], max_bytes=int(payload.max_gb * 1e9),
-                          reason="dashboard")
+    return action.archive(conn, ids, max_bytes=int(payload.max_gb * 1e9), reason="dashboard")
 
 
 @app.post("/api/undo")
@@ -230,6 +272,120 @@ def job():
     return {**{k: v for k, v in _job.items() if k != "result"},
             "result": _job.get("result"),
             "elapsed": round(time.time() - (_job["started"] or time.time()), 1)}
+
+
+@app.get("/api/file/{file_id}/meta")
+def file_meta(file_id: int, token: str | None = Query(None)):
+    _check_token(token)
+    return _resolve(db(), file_id)
+
+
+@app.get("/api/file/{file_id}/text")
+def file_text(file_id: int, token: str | None = Query(None)):
+    """First 24 KB of a text-ish file. Enough to recognise it, not enough to read a log."""
+    _check_token(token)
+    info = _resolve(db(), file_id)
+    try:
+        with open(info["path"], "rb") as handle:
+            raw = handle.read(MAX_INLINE_TEXT)
+    except OSError as exc:
+        raise HTTPException(500, str(exc))
+    return {"id": file_id, "name": info["name"], "kind": info["kind"],
+            "truncated": info["size_bytes"] > MAX_INLINE_TEXT,
+            "text": raw.decode("utf-8", "replace")}
+
+
+@app.get("/api/file/{file_id}/content")
+def file_content(file_id: int, request: Request, token: str | None = Query(None)):
+    """Stream a file to the browser, honouring Range so video and audio can seek."""
+    _check_token(token)
+    info = _resolve(db(), file_id)
+    path = info["path"]
+    size = os.path.getsize(path)
+    ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"
+
+    range_header = request.headers.get("range")
+    if not range_header:
+        def whole():
+            with open(path, "rb") as handle:
+                while chunk := handle.read(CHUNK):
+                    yield chunk
+        return StreamingResponse(whole(), media_type=ctype, headers={"accept-ranges": "bytes",
+                                                                    "content-length": str(size)})
+    try:
+        unit, _, spec = range_header.partition("=")
+        start_s, _, end_s = spec.partition("-")
+        start = int(start_s or 0)
+        end = int(end_s) if end_s else size - 1
+    except ValueError:
+        raise HTTPException(416, "bad range")
+    if unit != "bytes" or start >= size or end >= size:
+        raise HTTPException(416, "range not satisfiable")
+    length = end - start + 1
+
+    def part():
+        with open(path, "rb") as handle:
+            handle.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = handle.read(min(CHUNK, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    return StreamingResponse(part(), status_code=206, media_type=ctype,
+                             headers={"accept-ranges": "bytes", "content-range": f"bytes {start}-{end}/{size}",
+                                      "content-length": str(length)})
+
+
+@app.post("/api/trash")
+def trash(payload: ArchiveIn):
+    """Move to the macOS Trash. Recoverable by Put Back and by the manifest."""
+    from dormant import action
+
+    conn = db()
+    rows = engine.top_flagged(conn, limit=payload.top or 50)
+    ids = payload.ids or [r["id"] for r in rows]
+    if not payload.confirm:
+        return {"confirm_required": True, "would_trash": len(ids),
+                "bytes": sum(r["size_bytes"] for r in rows), "sample": rows[:12]}
+    if get_meta(conn, "data_mode", "real") == "demo":
+        raise HTTPException(409, "the demo corpus is synthetic: those files do not exist on disk")
+    return action.trash(conn, ids, max_bytes=int(payload.max_gb * 1e9), reason="dashboard")
+
+
+@app.post("/api/delete")
+def delete(payload: DeleteIn):
+    """Permanent deletion. The phrase is the gate, and nothing here can undo it.
+
+    The manifest is written before the first unlink, so there is always a record of
+    what was lost even if the process dies halfway.
+    """
+    from dormant import action
+
+    conn = db()
+    ids = payload.ids or [r["id"] for r in engine.top_flagged(conn, limit=payload.top)]
+    if payload.phrase != action.DELETE_PHRASE:
+        return {"confirm_required": True, "would_delete": len(ids),
+                "phrase_expected": action.DELETE_PHRASE,
+                "note": "type DELETE to confirm; this cannot be undone by Dormant"}
+    if get_meta(conn, "data_mode", "real") == "demo":
+        raise HTTPException(409, "the demo corpus is synthetic: those files do not exist on disk")
+    return action.purge(conn, ids, confirm=payload.phrase, reason="dashboard")
+
+
+@app.post("/api/quicklook")
+def quicklook(payload: IdsIn):
+    from dormant import action
+
+    conn = db()
+    paths = []
+    for i in payload.ids:
+        row = conn.execute("SELECT path FROM files WHERE id = ?", (i,)).fetchone()
+        if row:
+            paths.append(row["path"])
+    return action.quicklook(paths)
 
 
 if WEB_DIR.exists():

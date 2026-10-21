@@ -17,6 +17,13 @@ def _gb(n: int | float) -> str:
     return f"{n / 1e9:.1f} GB"
 
 
+def _pct(v: float) -> str:
+    """99.98% should not print as 100%. Certainty is not a rounding artefact."""
+    if v >= 0.995:
+        return f"{v * 100:.1f}%"
+    return f"{v * 100:.0f}%"
+
+
 def build_brief(count: int, bytes_total: float, mean_confidence: float, holdout_precision: float | None,
                forecast: dict, reclaimed_days: float | None, top_dir: str | None,
                horizon: int = REOPEN_WINDOW_DAYS, model_name: str = "TabPFN-2") -> dict:
@@ -24,11 +31,11 @@ def build_brief(count: int, bytes_total: float, mean_confidence: float, holdout_
     measured holdout precision is reported separately, because the two numbers mean
     different things and only one of them is a claim about accuracy."""
     line1 = (
-        f"Dormant found {count:,} files worth {_gb(bytes_total)} it is {mean_confidence:.0%} sure "
+        f"Dormant found {count:,} files worth {_gb(bytes_total)} it is {_pct(mean_confidence)} sure "
         f"you will not reopen inside {horizon} days."
     )
     if holdout_precision:
-        line1 += f" On the held-out slice it was right {holdout_precision:.0%} of the time it said stop."
+        line1 += f" On the held-out slice it was right {_pct(holdout_precision)} of the time it said stop."
     if forecast.get("available") and forecast.get("full_date"):
         tail = (f"At {_gb(int(forecast['growth_gb_per_week'] * 1e9))} a week of growth, "
                 f"{forecast['volume']} hits {forecast['warn_free_gb']:.0f} GB free on {forecast['full_date']}.")

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS files (
     used_dates    TEXT NOT NULL DEFAULT '[]',
     has_history   INTEGER NOT NULL DEFAULT 0,
     context       TEXT NOT NULL DEFAULT 'personal',
+    disposition   TEXT NOT NULL DEFAULT 'present',
     archived_at   TEXT,
     scanned_run   INTEGER
 );
@@ -97,6 +98,7 @@ CREATE TABLE IF NOT EXISTS actions (
     staged        TEXT NOT NULL,
     size_bytes    INTEGER NOT NULL,
     created_at    TEXT NOT NULL,
+    kind          TEXT NOT NULL DEFAULT 'staged',
     undone_at     TEXT,
     undo_complete INTEGER NOT NULL DEFAULT 0
 );
@@ -159,7 +161,13 @@ def init_db(conn: sqlite3.Connection) -> None:
     columns = {r["name"] for r in conn.execute("PRAGMA table_info(files)").fetchall()}
     if "context" not in columns:
         conn.execute("ALTER TABLE files ADD COLUMN context TEXT NOT NULL DEFAULT 'personal'")
-    set_meta(conn, "schema_version", "1")
+    if "disposition" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN disposition TEXT NOT NULL DEFAULT 'present'")
+        conn.execute("UPDATE files SET disposition = 'staged' WHERE archived_at IS NOT NULL")
+    actions_cols = {r["name"] for r in conn.execute("PRAGMA table_info(actions)").fetchall()}
+    if "kind" not in actions_cols:
+        conn.execute("ALTER TABLE actions ADD COLUMN kind TEXT NOT NULL DEFAULT 'staged'")
+    set_meta(conn, "schema_version", "2")
     set_meta(conn, "app_version", VERSION)
     conn.commit()
 
@@ -194,12 +202,12 @@ def upsert_file(conn: sqlite3.Connection, rec: dict) -> int | None:
         return int(row["id"])
     conn.execute(
         """INSERT INTO files(path, volume, root, name, ext, dir_depth, size_bytes, created_at,
-           modified_at, added_at, last_used_at, first_used_at, open_count, used_dates, has_history, context, scanned_run)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+           modified_at, added_at, last_used_at, first_used_at, open_count, used_dates, has_history, context, disposition, scanned_run)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (rec["path"], rec["volume"], rec["root"], rec["name"], rec["ext"], rec["dir_depth"],
          rec["size_bytes"], rec["created_at"], rec["modified_at"], rec.get("added_at"),
          rec.get("last_used_at"), rec.get("first_used_at"), rec.get("open_count", 0), used,
-         rec.get("has_history", 0), context, rec.get("scanned_run")),
+         rec.get("has_history", 0), context, "present", rec.get("scanned_run")),
     )
     cur = conn.execute("SELECT id FROM files WHERE path = ?", (rec["path"],))
     return int(cur.fetchone()["id"])
@@ -230,5 +238,5 @@ def file_count(conn: sqlite3.Connection, archived: bool | None = None) -> int:
     if archived is None:
         return int(conn.execute("SELECT COUNT(*) c FROM files").fetchone()["c"])
     if archived:
-        return int(conn.execute("SELECT COUNT(*) c FROM files WHERE archived_at IS NOT NULL").fetchone()["c"])
-    return int(conn.execute("SELECT COUNT(*) c FROM files WHERE archived_at IS NULL").fetchone()["c"])
+        return int(conn.execute("SELECT COUNT(*) c FROM files WHERE disposition != 'present'").fetchone()["c"])
+    return int(conn.execute("SELECT COUNT(*) c FROM files WHERE disposition = 'present'").fetchone()["c"])

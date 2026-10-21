@@ -191,9 +191,9 @@ def build_rows(conn, horizon: int = REOPEN_WINDOW_DAYS, *, include_project: bool
            "FROM files WHERE 1=1")
     args: list = []
     if archived is False:
-        sql += " AND archived_at IS NULL"
+        sql += " AND disposition = 'present'"
     elif archived is True:
-        sql += " AND archived_at IS NOT NULL"
+        sql += " AND disposition != 'present'"
     rows: list[Row] = []
     for file in conn.execute(sql, args).fetchall():
         f = dict(file)
@@ -228,7 +228,7 @@ def scoring_rows(conn, horizon: int = REOPEN_WINDOW_DAYS, *, include_project: bo
     """One row per live file, observed at now(). Only files already stale enough to ask about."""
     now = datetime.now(timezone.utc)
     sql = ("SELECT id, path, ext, size_bytes, created_at, modified_at, dir_depth, context "
-           "FROM files WHERE archived_at IS NULL")
+           "FROM files WHERE disposition = 'present'")
     out: list[Row] = []
     watching = 0
     for file in conn.execute(sql).fetchall():

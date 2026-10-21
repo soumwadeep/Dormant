@@ -118,6 +118,13 @@ PROJECT_MARKERS = (".git", "node_modules", "Package.swift", "Podfile", "Podfile.
 PROJECT_SEGMENTS = ("node_modules", "vendor", "DerivedData", "Pods", "site-packages", ".gradle",
                     ".terraform", ".cargo", ".pnpm-store", "bower_components", ".venv", "venv")
 
+#: Substrings that mark a *folder* as somebody's code rather than their documents.
+#: Cloned repositories often arrive as a zip with no .git and no manifest file, so
+#: markers alone leave them in the register. Matching a parent segment propagates
+#: down the tree, so one hit covers the whole checkout.
+PROJECT_DIR_HINTS = ("repos", "github", "gitlab", "bitbucket", "projects", "workspace",
+                     "src", "checkout", "codecanyon", "themeforest")
+
 #: Files smaller than this carry no usable signal and are noise to archive.
 MIN_FILE_BYTES = 2_048
 

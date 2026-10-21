@@ -17,6 +17,13 @@ from .store import parse_ts
 
 DAY = "%Y-%m-%d"
 
+#: Below this, "the disk is filling" is not a claim worth printing. 0.05 GB/day is
+#: about 350 MB a day, smaller than a single phone backup.
+MIN_GROWTH_GB_PER_DAY = 0.05
+
+#: A projection further out than this is an exercise in extrapolation, not a forecast.
+MAX_HORIZON_DAYS = 3650
+
 
 def _day(dt: datetime) -> str:
     return dt.strftime(DAY)
@@ -124,11 +131,18 @@ def forecast(conn, volume: str = "/", window_days: int = 365,
 
     days_to_warn = None
     full_date = None
-    if slope_gb_day > 0.0005:
+    if slope_gb_day >= MIN_GROWTH_GB_PER_DAY:
         remaining_gb = free_now / 1e9 - warn_free_gb
-        days_to_warn = (remaining_gb) / slope_gb_day
-        if days_to_warn > 0:
-            full_date = (datetime.now(timezone.utc) + timedelta(days=int(days_to_warn))).date().isoformat()
+        projected = remaining_gb / slope_gb_day
+        if 0 < projected <= MAX_HORIZON_DAYS:
+            days_to_warn = projected
+            full_date = (datetime.now(timezone.utc) + timedelta(days=int(projected))).date().isoformat()
+        else:
+            basis_note = (basis_note or "") + ("; " if basis_note else "") + \
+                f"projection exceeds {MAX_HORIZON_DAYS} days and is not shown"
+    else:
+        basis_note = (basis_note or "") + ("; " if basis_note else "") + \
+            f"growth {slope_gb_day:.3f} GB/day is below the {MIN_GROWTH_GB_PER_DAY} GB/day reporting floor"
 
     projections = {}
     for horizon in (14, 30, 60, 90):

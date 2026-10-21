@@ -10,6 +10,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23f0b429' stroke-width='2'/%3E%3Cpath d='M16 6a10 10 0 0 0 0 20' fill='none' stroke='%23f0b429' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23f0b429'/%3E%3C/svg%3E">
 </head>
 <body>
+<script>window.DORMANT_TOKEN = "__PREVIEW_TOKEN__";</script>
 <div class="frame">
   <div class="gridlines" aria-hidden="true"></div>
   <div class="sweep" aria-hidden="true"></div>
@@ -100,6 +101,7 @@
       </div>
       <div class="ledger-actions">
         <button class="btn primary" id="stageBtn">Stage top candidates</button>
+        <button class="btn warn" id="trashBtn">Trash top candidates</button>
         <button class="btn ghost" id="undoBtn">Undo last manifest</button>
       </div>
       <p class="assurance" id="assurance">Dormant moves files into a dated staging folder and keeps a manifest. It has no delete code path.</p>
@@ -126,9 +128,21 @@
       </div>
       <div class="table-scroll">
         <table class="register">
-          <thead><tr><th>file</th><th>size</th><th>last opened</th><th>days shut</th><th class="num">confidence</th></tr></thead>
+          <thead><tr>
+            <th class="chk"><input type="checkbox" id="checkAll" aria-label="select all shown"></th>
+            <th>file</th><th>size</th><th>last opened</th><th>days shut</th><th class="num">confidence</th><th></th>
+          </tr></thead>
           <tbody id="registerBody"></tbody>
         </table>
+      </div>
+      <div class="select-bar" id="selectBar" hidden>
+        <span id="selCount">0 selected</span>
+        <span id="selBytes"></span>
+        <button class="btn tiny" id="previewSel">Preview</button>
+        <button class="btn tiny" id="stageSel">Stage</button>
+        <button class="btn tiny warn" id="trashSel">Move to Trash</button>
+        <button class="btn tiny danger" id="deleteSel">Delete permanently</button>
+        <button class="btn tiny ghost" id="clearSel">Clear</button>
       </div>
       <div class="table-foot"><span id="registerCount"></span><button class="btn tiny" id="moreBtn">load more</button></div>
     </section>
@@ -169,6 +183,23 @@
   </footer>
 </div>
 <div class="toast" id="toast" hidden></div>
+
+<div class="drawer" id="drawer" hidden aria-modal="true" role="dialog" aria-label="file preview">
+  <div class="drawer-head">
+    <div class="drawer-title">
+      <b id="drawerName">preview</b>
+      <span id="drawerMeta"></span>
+    </div>
+    <div class="drawer-nav">
+      <button class="mini" id="drawerPrev" aria-label="previous file">←</button>
+      <span id="drawerPos"></span>
+      <button class="mini" id="drawerNext" aria-label="next file">→</button>
+      <button class="btn tiny" id="drawerQL">Quick Look</button>
+      <button class="btn tiny ghost" id="drawerClose">Close</button>
+    </div>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</div>
 <script type="module" src="/static/app.js"></script>
 </body>
 </html>

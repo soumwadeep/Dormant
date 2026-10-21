@@ -12,7 +12,9 @@ const isTouch = window.matchMedia('(hover: none)').matches;
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
-const state = { data: null, points: [], sort: 'conf', filter: '', shown: 60, job: null, source: 'api' };
+const state = { data: null, points: [], sort: 'conf', filter: '', shown: 60, job: null, source: 'api',
+                 selected: new Set(), rows: [] };
+const TOKEN = window.DORMANT_TOKEN || '';
 
 /* ------------------------------------------------------------------ prefs */
 
@@ -338,9 +340,13 @@ function renderLedger(d) {
   animateNumber($('#figFiles'), f.files || 0, v => Math.round(v).toLocaleString());
   animateNumber($('#figDays'), f.days_bought || 0, v => Math.round(v).toString());
   const a = d.archive || {};
+  const parts = [];
+  if (a.archived_files) parts.push(`${a.archived_files} staged`);
+  if (a.trashed_files) parts.push(`${a.trashed_files} in Trash`);
+  if (a.deleted_files) parts.push(`${a.deleted_files} deleted (${fmtGb(a.deleted_bytes)} GB freed)`);
   $('#assurance').textContent = a.reversible_manifests
-    ? `${a.archived_files} files staged and fully recoverable across ${a.reversible_manifests} open manifest(s). No delete code path exists.`
-    : 'Dormant moves files into a dated staging folder and keeps a manifest. It has no delete code path.';
+    ? `${parts.join(', ')}. ${a.reversible_manifests} manifest(s) still reversible. Permanent delete requires typing DELETE and cannot be undone.`
+    : 'Three levels of letting go: stage (reversible here), Trash (Put Back in Finder), or delete permanently (needs the word DELETE).';
 }
 
 function renderForecast(d) {
@@ -425,16 +431,143 @@ function renderRegister(d) {
   }
   rows.sort((a, b) => state.sort === 'size' ? b.size_bytes - a.size_bytes : b.dormant - a.dormant);
   const slice = rows.slice(0, state.shown);
+  state.rows = slice;
   $('#registerBody').innerHTML = slice.map(r => `
-    <tr data-id="${r.id}">
+    <tr data-id="${r.id}" class="${state.selected.has(r.id) ? 'sel' : ''}">
+      <td class="chk"><input type="checkbox" data-pick="${r.id}" ${state.selected.has(r.id) ? 'checked' : ''} aria-label="select ${r.name}"></td>
       <td class="fname"><b>${r.name}</b><span>${(r.path || '').replace(r.name, '')}</span></td>
       <td>${fmtGb(r.size_bytes)} GB</td>
       <td>${r.last_used_at ? day(r.last_used_at) : '<span class="never">never</span>'}</td>
       <td>${r.shut.toLocaleString()} d</td>
       <td class="num"><span class="conf"><span class="conf-bar"><i style="width:${(r.dormant * 100).toFixed(0)}%"></i></span><b>${pct(r.dormant)}</b></span></td>
+      <td><button class="peek" data-peek="${r.id}">view</button></td>
     </tr>`).join('');
   $('#registerCount').textContent = `${rows.length.toLocaleString()} dormant-ranked files · showing ${slice.length}`;
   $('#moreBtn').style.display = rows.length > state.shown ? '' : 'none';
+  syncSelectBar();
+}
+
+/* ------------------------------------------------------------------ selection */
+
+function syncSelectBar() {
+  const ids = [...state.selected];
+  const bar = $('#selectBar');
+  bar.hidden = ids.length === 0;
+  if (!ids.length) return;
+  const byId = new Map(state.rows.map(r => [r.id, r]));
+  const bytes = ids.reduce((s, i) => s + ((byId.get(i) || {}).size_bytes || 0), 0);
+  $('#selCount').textContent = `${ids.length} selected`;
+  $('#selBytes').textContent = `${fmtGb(bytes)} GB`;
+}
+
+document.addEventListener('change', e => {
+  const pick = e.target.dataset?.pick;
+  if (pick) {
+    const id = Number(pick);
+    e.target.checked ? state.selected.add(id) : state.selected.delete(id);
+    e.target.closest('tr')?.classList.toggle('sel', e.target.checked);
+    syncSelectBar();
+  }
+  if (e.target.id === 'checkAll') {
+    state.rows.forEach(r => e.target.checked ? state.selected.add(r.id) : state.selected.delete(r.id));
+    renderRegister(state.data || {});
+  }
+});
+
+document.addEventListener('click', e => {
+  const peek = e.target.dataset?.peek;
+  if (peek) openDrawer([Number(peek)], 0);
+});
+
+$('#clearSel')?.addEventListener('click', () => { state.selected.clear(); renderRegister(state.data || {}); });
+$('#previewSel')?.addEventListener('click', () => openDrawer([...state.selected], 0));
+$('#stageSel')?.addEventListener('click', () => runAction('archive', [...state.selected]));
+$('#trashSel')?.addEventListener('click', () => runAction('trash', [...state.selected]));
+$('#deleteSel')?.addEventListener('click', () => runAction('delete', [...state.selected]));
+
+/* ------------------------------------------------------------------ preview drawer */
+
+const drawer = { ids: [], i: 0 };
+
+function fileUrl(id, what = 'content') {
+  return `/api/file/${id}/${what}?token=${encodeURIComponent(TOKEN)}`;
+}
+
+async function openDrawer(ids, index = 0) {
+  if (!ids.length) return toast('nothing selected');
+  drawer.ids = ids; drawer.i = index;
+  $('#drawer').hidden = false;
+  await showDrawerItem();
+}
+
+async function showDrawerItem() {
+  const id = drawer.ids[drawer.i];
+  const body = $('#drawerBody');
+  body.innerHTML = '<span class="missing">loading…</span>';
+  $('#drawerPos').textContent = `${drawer.i + 1} / ${drawer.ids.length}`;
+  let meta;
+  try { meta = await getJSON(`/api/file/${id}/meta?token=${encodeURIComponent(TOKEN)}`); }
+  catch (err) { body.innerHTML = `<span class="missing">${String(err.message || err)}</span>`; return; }
+  $('#drawerName').textContent = meta.name;
+  $('#drawerMeta').textContent =
+    `${meta.kind} · ${fmtGb(meta.size_bytes)} GB · ${meta.open_count || 0} recorded opens · last opened ${day(meta.last_used_at)}`;
+  if (!meta.exists) { body.innerHTML = '<span class="missing">not on disk any more (staged, trashed or deleted)</span>'; return; }
+
+  if (meta.kind === 'image') body.innerHTML = `<img src="${fileUrl(id)}" alt="${meta.name}">`;
+  else if (meta.kind === 'pdf') body.innerHTML = `<iframe src="${fileUrl(id)}" title="${meta.name}"></iframe>`;
+  else if (meta.kind === 'audio') body.innerHTML = `<audio controls src="${fileUrl(id)}"></audio>`;
+  else if (meta.kind === 'video') body.innerHTML = `<video controls src="${fileUrl(id)}"></video>`;
+  else if (meta.kind === 'text') {
+    const t = await getJSON(`/api/file/${id}/text?token=${encodeURIComponent(TOKEN)}`);
+    const el = document.createElement('pre');
+    el.textContent = t.text + (t.truncated ? '\n\n… first 24 KB only' : '');
+    body.innerHTML = ''; body.appendChild(el);
+  } else body.innerHTML = `<span class="missing">no inline preview for ${meta.ext || 'this type'} · use Quick Look</span>`;
+}
+
+$('#drawerClose')?.addEventListener('click', () => { $('#drawer').hidden = true; });
+$('#drawerPrev')?.addEventListener('click', () => { if (drawer.i > 0) { drawer.i--; showDrawerItem(); } });
+$('#drawerNext')?.addEventListener('click', () => { if (drawer.i < drawer.ids.length - 1) { drawer.i++; showDrawerItem(); } });
+$('#drawerQL')?.addEventListener('click', async () => {
+  try { await postJSON('/api/quicklook', { ids: drawer.ids }); logLine(`Quick Look opened ${drawer.ids.length} file(s)`); }
+  catch (e) { toast('Quick Look failed: ' + e.message); }
+});
+document.addEventListener('keydown', e => {
+  if ($('#drawer').hidden) return;
+  if (e.key === 'Escape') $('#drawer').hidden = true;
+  if (e.key === 'ArrowRight') $('#drawerNext').click();
+  if (e.key === 'ArrowLeft') $('#drawerPrev').click();
+});
+
+/* ------------------------------------------------------------------ destructive ladder */
+
+async function runAction(kind, ids) {
+  if (!ids.length) return toast('select some files first');
+  if (state.data?.mode === 'demo') {
+    return toast('Demo files are synthetic and do not exist on disk. Run on a real index to stage, trash or delete.');
+  }
+  const bytes = ids.reduce((s, i) => s + ((new Map(state.rows.map(r => [r.id, r]))).get(i)?.size_bytes || 0), 0);
+  if (kind === 'delete') {
+    const phrase = window.prompt(
+      `PERMANENT DELETE.\n\n${ids.length} files, ${fmtGb(bytes)} GB will be removed from disk.\n` +
+      `They will NOT go to the Trash and Dormant cannot undo this.\n\n` +
+      `Type DELETE to confirm, or cancel.`);
+    if (phrase !== 'DELETE') return logLine('permanent delete cancelled at the phrase gate');
+    const res = await postJSON('/api/delete', { ids, phrase });
+    logLine(`deleted ${res.removed} files, ${fmtGb(res.bytes_freed)} GB freed, manifest ${res.manifest}`, 'warn');
+    toast(`deleted ${res.removed} files · ${fmtGb(res.bytes_freed)} GB`);
+  } else {
+    const label = kind === 'trash' ? 'move to the Trash' : 'stage into the Dormant folder';
+    if (!window.confirm(`Dormant will ${label} ${ids.length} files (${fmtGb(bytes)} GB).\nNothing is deleted. Undo reverses it.\n\nProceed?`)) {
+      return logLine(`${kind} dismissed`);
+    }
+    const url = kind === 'trash' ? '/api/trash' : '/api/archive';
+    const res = await postJSON(url, { ids: ids.length ? ids : undefined, top: ids.length ? 0 : 50, max_gb: 2000, confirm: true });
+    logLine(`${kind}: ${res.count} files, ${fmtGb(res.bytes)} GB, manifest ${res.manifest}`);
+    toast(`${kind}: ${res.count} files`);
+  }
+  state.selected.clear();
+  load();
 }
 
 function renderStatus(d) {
@@ -521,26 +654,16 @@ $('#rescoreBtn')?.addEventListener('click', async () => {
   catch (e) { toast('re-score failed: ' + e.message); }
 });
 
-$('#stageBtn')?.addEventListener('click', async () => {
-  if (state.data?.mode === 'demo') return toast('Demo corpus files do not exist on disk, so staging is disabled. Run on a real index to stage.');
-  try {
-    const preview = await postJSON('/api/archive', { top: 50, max_gb: 10, confirm: false });
-    const ok = window.confirm(
-      `Dormant will move ${preview.would_stage} files (${fmtGb(preview.bytes)} GB) into a dated staging folder.\n` +
-      `Nothing is deleted; undo restores every file to its exact original path.\n\nProceed?`);
-    if (!ok) return logLine('archive preview dismissed');
-    const res = await postJSON('/api/archive', { top: 50, max_gb: 10, confirm: true });
-    logLine(`staged ${res.count} files, ${fmtGb(res.bytes)} GB, manifest ${res.manifest}`);
-    toast(`staged ${res.count} files · manifest ${res.manifest}`);
-    load();
-  } catch (e) { toast('archive failed: ' + e.message); }
-});
+$('#stageBtn')?.addEventListener('click', () => runAction('archive', []));
+$('#trashBtn')?.addEventListener('click', () => runAction('trash', []));
 
 $('#undoBtn')?.addEventListener('click', async () => {
   try {
     const preview = await postJSON('/api/undo', { confirm: false });
     if (!preview.manifest) return toast('nothing to undo');
+    if (!window.confirm(`Restore every file from manifest ${preview.manifest}?`)) return;
     const res = await postJSON('/api/undo', { manifest: preview.manifest, confirm: true });
+    if (res.reason) return toast(res.reason);
     logLine(`restored ${res.restored} files from ${res.manifest}`);
     toast(`restored ${res.restored} files`);
     load();
@@ -585,6 +708,14 @@ setInterval(() => {
 
 field.init();
 applyPrefs();
-load();
+load().then(() => {
+  // ?preview=<id> or ?preview=1,2,3 opens the drawer directly, so a preview can be
+  // linked from the CLI or a terminal without anyone having to click through the list.
+  const raw = new URLSearchParams(location.search).get('preview');
+  if (raw) {
+    const ids = raw.split(',').map(s => Number(s.trim())).filter(Number.isFinite);
+    if (ids.length) openDrawer(ids, 0);
+  }
+});
 setInterval(() => { if (document.visibilityState === 'visible' && !state.job) load(); }, 60000);
 window.addEventListener('resize', () => { field.resize(); renderForecast(state.data || {}); renderBench(state.data || {}); });

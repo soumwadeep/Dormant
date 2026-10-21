@@ -7,7 +7,7 @@ Dormant answers one question about a file that has already been shut for three w
 It runs on an 8 GB Apple M1, on CPU, with no network access, no API key, no account and no bill. The model is [TabPFN](https://github.com/PriorLabs/TabPFN), an open-weight tabular foundation model, and the entire checkpoint is 28 MB.
 
 ```
-Dormant found 730 files worth 71.3 GB it is 99% sure you will not reopen inside 90 days.
+Dormant found 519 files worth 71.0 GB it is 99% sure you will not reopen inside 90 days.
 On the held-out slice it was right 99% of the time it said stop.
 ```
 
@@ -33,29 +33,29 @@ The split is on the observation date, never random. Two rows from the same file 
 
 ## What it measured
 
-Real index, this machine, 88,241 files walked, 12,935 openable files stored, 935 personal documents, 314 carrying recorded open history, 6,963 labelable observation rows. Time-split holdout: 4,874 train / 1,800 test rows, cut 2025-03-01, 10.4% positive.
+Real index, this machine: 88,250 files walked, 12,719 openable files stored, 669 personal documents, 283 of them carrying recorded open history, 6,918 labelable observation rows. Time-split holdout of 4,842 train and 1,800 test rows, cut 2025-03-01, 10.6% positive.
 
 | model | AUC | precision | recall | GB reclaimed | wrong calls |
 |---|---|---|---|---|---|
-| rule: 90 days idle | 0.379 | 0.865 | 0.705 | 3.9 | 177 |
-| logistic regression | 0.829 | 0.956 | 0.720 | 45.0 | 53 |
-| random forest | 0.916 | 0.982 | 0.768 | 44.4 | 23 |
-| HistGradientBoosting | 0.967 | 0.988 | 0.945 | 45.3 | 19 |
-| **TabPFN-2 (open weights)** | **0.955** | **0.987** | **0.873** | **45.0** | **19** |
+| rule: 90 days idle | 0.378 | 0.862 | 0.704 | 3.9 | 181 |
+| logistic regression | 0.821 | 0.959 | 0.714 | 45.0 | 49 |
+| random forest | 0.920 | 0.985 | 0.758 | 44.4 | 19 |
+| **HistGradientBoosting** | **0.962** | 0.988 | 0.895 | **45.3** | 18 |
+| TabPFN-2 (open weights, shipped) | 0.956 | 0.987 | 0.885 | 45.1 | 19 |
 
-The first row is the interesting one. "Archive anything untouched for ninety days", which is what a person writes by hand in an afternoon, scores **worse than a coin flip**, because ninety days idle is exactly what a file looks like in the week before a deadline drags it back. The model is not beating a strawman; it is beating the heuristic that motivated the product.
+The first row is the finding. "Archive anything untouched for ninety days", which is what a person writes by hand in an afternoon, scores **worse than a coin flip**: ninety days idle is exactly what a file looks like in the week before a deadline drags it back. The model is not beating a strawman, it is beating the heuristic that motivated the product.
 
-Dormant also benchmarks itself as the labelled corpus shrinks, because a personal corpus is small and that is the regime an in-context model is built for:
+The second finding is less comfortable and is reported anyway. Dormant benchmarks itself as the labelled corpus shrinks, because a personal corpus is small and that is the regime an in-context model is supposed to own. On my machine a boosted-tree baseline wins at every size:
 
-| labelled rows | TabPFN | random forest | hist gb | logistic |
+| labelled rows | TabPFN | hist gb | random forest | logistic |
 |---|---|---|---|---|
-| 120 | **0.938** | 0.843 | 0.909 | 0.627 |
-| 240 | 0.941 | 0.789 | 0.946 | **0.952** |
-| 480 | 0.946 | 0.859 | **0.950** | 0.781 |
-| 960 | **0.950** | 0.892 | 0.944 | 0.790 |
-| 1,920 | **0.955** | 0.905 | 0.950 | 0.788 |
+| 120 | 0.934 | **0.936** | 0.883 | 0.654 |
+| 240 | 0.944 | **0.961** | 0.906 | 0.716 |
+| 480 | 0.943 | **0.952** | 0.885 | 0.935 |
+| 960 | 0.943 | **0.956** | 0.885 | 0.775 |
+| 1,920 | 0.947 | **0.953** | 0.902 | 0.801 |
 
-TabPFN is the best predictor at three of the five corpus sizes and within 0.011 AUC of the leader at the other two, with no training run at any of them: the labelled rows go into the model as context and probabilities come out.
+So why ship TabPFN? Not for the last decimal. It is the default because it needs no training run, no feature engineering loop and no hyperparameter search, it fits in 444 MB of RAM, and changing the question from 30 days to 90 is a constant and a re-run rather than a re-fit. The scoreboard keeps the baselines in it precisely so that claim stays falsifiable, and this table is what happened when I tried to falsify it.
 
 ## Why open weights, specifically
 
@@ -64,12 +64,28 @@ TabPFN is the best predictor at three of the five corpus sizes and within 0.011 
 - **It fits the laptop that has to run it.** TabPFN-2's checkpoint is 28 MB and peaks at 444 MB of RAM. TabPFN-3.5 is recommended upstream and is wired in behind `DORMANT_TABPFN_MODEL=3.5-fast`, but its fast checkpoint is 334 MB and it sits behind a licence-acceptance wall that needs an account. A product about doing nothing should not require a signup.
 - **Swapping it is a config change.** `dormant/model.py` treats the predictor as a provider. Baselines are in the same scoreboard precisely so the open-weight claim can be falsified.
 
+## Three levels of letting go
+
+Dormant can destroy a file, so the ladder to get there is deliberately uneven.
+
+| action | what happens | reversible by |
+|---|---|---|
+| `archive` | moves into `~/Dormant Archive/<date>/`, writes a manifest | `undo`, from the index |
+| `trash` | moves into the macOS Trash | Finder's Put Back, or `undo` |
+| `purge` | `os.remove`, for real | nothing in this program |
+
+`purge()` requires the caller to pass the exact string `DELETE`, writes the manifest of what is about to be lost **before** the first unlink, and `latest_manifest()` skips delete manifests so `undo` can never offer to reverse one. Everything else is shared: no path that is not in the index, no protected system prefix, no symlink, no overwriting (collisions become `file.dup1.ext`).
+
+`archive` and `trash` are also tested against a tripwire: `os.remove`, `os.unlink`, `os.rmdir` and `os.replace` are patched to raise, so if either function ever learns to delete, the suite fails.
+
+The dashboard exposes all three, with `Delete permanently` behind a typed phrase and `Preview` in front of all of them, because the fastest way to trust a list of 730 files is to look at six of them.
+
 ## What it will not do
 
-- **It has no delete code path.** `os.remove`, `os.unlink`, `os.rmdir` and `os.replace` are wired to raise in `tests/test_action_safety.py`. Archiving moves files into `~/Dormant Archive/<date>/` and writes a manifest; `undo` puts every file back at its exact original path.
-- **It never overwrites.** A name collision produces `file.dup1.ext`, and the test asserts both bytes survive.
-- **It refuses what it does not know.** Paths that are not in the index, protected system prefixes, symlinks and already-archived files are skipped, not forced.
+- **It never overwrites.** A name collision produces `file.dup1.ext`, and a test asserts both files survive with their bytes intact.
+- **It refuses what it does not know.** Paths that are not in the index, protected system prefixes, symlinks and already-moved files are skipped, not forced.
 - **It does not let the model state numbers.** The brief is a template over computed integers. A language model that rounds 71.3 GB to "about 70" is a bug.
+- **It does not serve your files to anything that asks.** The preview endpoints hand out real file contents, so they require a token that is generated at server start and injected into the page's HTML. A random process or website reaching `127.0.0.1:8712` gets 403, and there is a test for it.
 
 ## Install and run
 
@@ -88,10 +104,13 @@ python cli.py --demo demo          # synthetic corpus: safe to screenshot
 python cli.py --demo run --bench
 python cli.py --demo serve
 
+python cli.py preview 12 41 7      # Quick Look indexed files
 python cli.py archive --top 50 --max-gb 10      # previews without --yes
 python cli.py undo --yes
+python cli.py trash --top 20 --yes              # to the macOS Trash
+python cli.py purge --ids 12 41 --phrase DELETE --yes   # irreversible
 
-python -m pytest -q                # 32 tests
+python -m pytest -q                # 43 tests
 ```
 
 `scan` roots default to `~/Downloads ~/Desktop ~/Documents`; pass `--roots` for anything else. The nightly job is whatever scheduler you like:

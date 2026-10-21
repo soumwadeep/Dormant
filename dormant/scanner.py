@@ -34,11 +34,13 @@ from .config import (
     MDLS_BATCH,
     MIN_FILE_BYTES,
     OPENABLE_EXTS,
+    PROJECT_DIR_HINTS,
     PROJECT_MARKERS,
     PROJECT_SEGMENTS,
     SCAN_EXCLUDE_DIRS,
     SCAN_EXCLUDE_SUFFIXES,
 )
+from .features import is_project_path
 from .store import parse_ts, utcnow
 
 DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})")
@@ -90,6 +92,9 @@ def _dir_is_project(dirpath: str) -> bool:
         return True
     segments = set(dirpath.split("/"))
     if segments & set(PROJECT_SEGMENTS):
+        return True
+    lowered = base.lower()
+    if any(hint in lowered for hint in PROJECT_DIR_HINTS):
         return True
     for marker in PROJECT_MARKERS:
         try:
@@ -252,6 +257,7 @@ class ScanResult:
     roots: tuple[str, ...] = ()
     mode: str = "real"
     volumes: dict = field(default_factory=dict)
+    pruned: int = 0
 
     def as_dict(self) -> dict:
         return {
@@ -261,6 +267,7 @@ class ScanResult:
             "bytes_scanned": self.bytes_scanned,
             "inventory_s": round(self.inventory_s, 2),
             "history_s": round(self.history_s, 2),
+            "pruned_stale": self.pruned,
             "roots": list(self.roots),
             "mode": self.mode,
         }
@@ -319,7 +326,9 @@ def scan(conn, roots: list[Path], *, use_index: bool = True, workers: int = 8,
                 "size_bytes": st.st_size,
                 "created_at": iso(datetime.fromtimestamp(getattr(st, "st_birthtime", st.st_ctime), tz=timezone.utc)),
                 "modified_at": iso(datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)),
-                "context": "personal",
+                # Files that only the index knows about still need an honest context,
+                # or every asset inside a downloaded repository arrives as "personal".
+                "context": "project" if is_project_path(p) else "personal",
             })
     candidates = personal + [e["path"] for e in extras]
     hist = history(candidates, workers=workers)
@@ -350,6 +359,23 @@ def scan(conn, roots: list[Path], *, use_index: bool = True, workers: int = 8,
         vols[vol] = {"total_bytes": usage.total, "free_bytes": usage.free}
         record_snapshot(conn, vol, usage.total, usage.free)
 
+    # A full scan replaces the present-tense view of the disk. Rows that this walk did
+    # not touch are either gone or no longer match the filters, and keeping them means
+    # the register keeps recommending files that were excluded two versions ago.
+    # Files Dormant has already moved out of the way are left alone, because their
+    # disposition is the record. Only prune when the walk finished: a scan that hit a
+    # cap saw part of the disk, and deleting the rest would be worse than stale rows.
+    stale = 0
+    walk_was_complete = seen <= MAX_TRAVERSAL_FILES and len(records) < MAX_SCAN_FILES
+    if walk_was_complete and mode == "real":
+        stale = conn.execute(
+            """DELETE FROM files WHERE disposition = 'present'
+               AND (scanned_run IS NULL OR scanned_run != ?)""",
+            (run_id,),
+        ).rowcount
+        conn.execute("DELETE FROM opens WHERE file_id NOT IN (SELECT id FROM files)")
+        conn.commit()
+
     conn.execute(
         """UPDATE scan_runs SET finished_at=?, files_seen=?, files_stored=?, with_history=?,
            bytes_scanned=?, seconds=? WHERE id=?""",
@@ -360,5 +386,5 @@ def scan(conn, roots: list[Path], *, use_index: bool = True, workers: int = 8,
     return ScanResult(
         files_seen=seen, files_stored=stored, with_history=with_hist,
         bytes_scanned=total_bytes, inventory_s=inventory_s, history_s=history_s,
-        roots=tuple(str(r) for r in roots), mode=mode, volumes=vols,
+        roots=tuple(str(r) for r in roots), mode=mode, volumes=vols, pruned=stale,
     )
