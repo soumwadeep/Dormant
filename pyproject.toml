@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dormant"
+version = "0.1.0"
+description = "An open-weight model that reads what macOS already recorded about your files and tells you which of them you are never going to open again."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Soumwadeep Guha" }]
+keywords = ["local-ai", "tabpfn", "open-weights", "macos", "privacy", "tabular-foundation-model"]
+dependencies = [
+  "tabpfn>=9.2,<10",
+  "torch>=2.2",
+  "scikit-learn>=1.4",
+  "numpy>=1.26",
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+dormant = "cli:main"
+
+[tool.setuptools]
+packages = ["dormant", "api"]
+py-modules = ["cli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

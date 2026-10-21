@@ -1,0 +1,23 @@
+# environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# the index is personal: file paths, open times, sizes. never commit it.
+data/
+*.sqlite
+*.sqlite3
+*.db
+checkpoints/
+*.ckpt
+archive-manifests/
+.env
+
+# the model never deletes; staging lives outside the repo
+dormant-archive/
+
+.DS_Store
+node_modules/
+dist/

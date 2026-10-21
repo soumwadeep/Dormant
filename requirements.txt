@@ -1,0 +1,9 @@
+tabpfn>=9.2,<10
+torch
+scikit-learn
+pandas
+numpy
+fastapi
+uvicorn
+pytest
+httpx
