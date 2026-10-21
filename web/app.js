@@ -496,6 +496,9 @@ function fileUrl(id, what = 'content') {
 async function openDrawer(ids, index = 0) {
   if (!ids.length) return toast('nothing selected');
   drawer.ids = ids; drawer.i = index;
+  $('#drawerName').textContent = 'loading…';
+  $('#drawerMeta').textContent = '';
+  $('#drawerBody').innerHTML = '<span class="missing">loading…</span>';
   $('#drawer').hidden = false;
   await showDrawerItem();
 }

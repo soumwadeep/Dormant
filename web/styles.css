@@ -50,6 +50,11 @@ html[data-theme="light"] {
 
 * { box-sizing: border-box; }
 
+/* Any rule that sets display (like .drawer's flex) outranks the UA stylesheet's
+   [hidden] { display: none }, which left the preview drawer on screen with its empty
+   default state. One global rule keeps the hidden attribute authoritative. */
+[hidden] { display: none !important; }
+
 html, body { height: 100%; }
 
 body {
