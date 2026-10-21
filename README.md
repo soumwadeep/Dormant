@@ -2,6 +2,8 @@
 
 **An open-weight model that reads what macOS already recorded about your files and tells you which of them you are never going to open again.**
 
+![Dormant](docs/cover.png)
+
 Dormant answers one question about a file that has already been shut for three weeks: *does it come back inside ninety days?* The answer decides whether 71 GB of your disk is a library or a landfill.
 
 It runs on an 8 GB Apple M1, on CPU, with no network access, no API key, no account and no bill. The model is [TabPFN](https://github.com/PriorLabs/TabPFN), an open-weight tabular foundation model, and the entire checkpoint is 28 MB.
