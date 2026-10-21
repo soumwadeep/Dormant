@@ -76,7 +76,8 @@ def cmd_run(args):
     print()
     s = out.get("scoring", {})
     print(f"scored {s.get('scored', 0):,} stale files in {s.get('seconds', 0)}s  "
-          f"(threshold {s.get('threshold')}, mean confidence {s.get('precision')})")
+          f"(dormancy threshold {s.get('threshold')}, holdout precision "
+          f"{round(s.get('precision_at_threshold') or 0, 4)})")
     if args.bench:
         for r in out["bench_detail"]["results"]:
             print(f"  {r['model']:14s} auc {r['auc']}  prec {r['precision']}  rec {r['recall']}  "

@@ -46,7 +46,9 @@ def build_brief(count: int, bytes_total: float, mean_confidence: float, holdout_
     detail = []
     if top_dir:
         detail.append(f"largest cluster: {top_dir}")
-    detail.append(f"model: {model_name}, local, {horizon}-day horizon")
+    detail.append(f"model: {model_name}, {horizon}-day horizon")
+    if forecast.get("basis_note"):
+        detail.append("disk projection is a floor: " + forecast["basis_note"].split(":")[0])
     return {
         "line1": line1,
         "line2": line2,
