@@ -370,7 +370,8 @@ function renderForecast(d) {
     const cs = getComputedStyle(document.documentElement);
     const accent = cs.getPropertyValue('--acc').trim() || '#f0b429';
     lineChart($('#curve'), [{ values: curve, color: accent, fill: accent + '22', dotLast: true }],
-      { xCount: curve.length - 1, labels: [{ text: day((f.curve || [])[0]?.date), i: 0 }, { text: day((f.curve || [])[(f.curve || []).length - 1]?.date), i: curve.length - 1 }] });
+      { xCount: curve.length - 1, labels: [{ text: day((f.curve || [])[0]?.date), i: 0 },
+        { text: day((f.curve || [])[(f.curve || []).length - 1]?.date), i: curve.length - 1, last: true }] });
   }
 }
 

@@ -102,7 +102,16 @@ cd /path/to/Dormant && .venv/bin/python cli.py scan && .venv/bin/python cli.py b
 
 ## The dashboard
 
-One page of vanilla JS with three.js **vendored in `web/vendor/`**, so the console renders with the network off. Radius is age, height is `1 - p(reopen)`; the silhouette of a neglected disk is legible before you read a number. Dark and light themes, four accents, a density toggle, `?theme=&accent=` for shareable state, reduced-motion support, and a mobile layout that becomes tabs rather than a shrunk desktop.
+![The dormancy field](docs/screenshots/dormancy-field.png)
+
+Radius is age, height is `1 - p(reopen)`, so the silhouette of a neglected disk is legible before you read a number. The corpus shown here is the **synthetic** one.
+
+![Model bench and register](docs/screenshots/model-bench.png)
+
+One page of vanilla JS with three.js **vendored in `web/vendor/`**, so the console renders with the network off. Dark and light themes, four accents, a density toggle, `?theme=&accent=` for shareable state, reduced-motion support, and a mobile layout that becomes tabs rather than a shrunk desktop.
+
+![Light theme, cyan accent](docs/screenshots/light-cyan.png)
+![Mobile at 390px](docs/screenshots/mobile.png)
 
 `web/snapshot.json` is a capture of the **synthetic** corpus so the page can be shown with no backend at all.
 
